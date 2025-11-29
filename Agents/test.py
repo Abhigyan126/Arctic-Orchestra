@@ -1,4 +1,5 @@
 from base import BaseAgent
+from sequential_agent import SequentialAgent
 import os
 import requests
 from dotenv import load_dotenv
@@ -154,61 +155,51 @@ def weather_check(city: str = None, date: str = None):
     weather_index = int(hashlib.md5(f"{city}{date}".encode()).hexdigest(), 16) % len(weather_options)
     return f"Weather in {city} on {date}: {weather_options[weather_index]}"
 
-
-# ----------------------
-# Initialize Agent
-# ----------------------
-agent = BaseAgent(
+flight_agent = BaseAgent(
     model=openrouter_model,
-    name="Agent",
-    identity="Expert Travel Planning Agent specialized in creating comprehensive itineraries",
-    instruction=(
-        "You are a helpful travel agent. Your job is to:\n"
-        "1. Use available tools to gather all necessary travel information\n"
-        "2. Call tools in a logical sequence (flights first, then accommodation, then local transport)\n"
-        "3. After gathering all information, present it as a well-organized itinerary\n"
-        "4. Be thorough - use all relevant tools for the user's request\n"
-        "5. Always verify you have all required information before finishing"
-    ),
-    task="Create comprehensive travel itineraries by coordinating flights, hotels, local transport, and weather information",
-    tools={
-        "find_flight": find_flight,
-        "hotel_booking": hotel_booking,
-        "local_transport": local_transport,
-        "weather_check": weather_check
-    },
-    max_iterations=15,  # Increased for multi-step planning
-    debug=True
+    name="FlightAgent",
+    identity="Specialized agent for finding flights",
+    instruction="Focus only on flight options, schedules, and prices.",
+    task="Find the best flights based on user query.",
+    tools={"find_flight": find_flight},
+    debug=True,
+    max_iterations=5
 )
 
+hotel_agent = BaseAgent(
+    model=openrouter_model,
+    name="HotelAgent",
+    identity="Specialized agent for hotel booking",
+    instruction="Focus only on hotels, availability, pricing, and nights.",
+    task="Book or suggest hotels based on user query.",
+    tools={"hotel_booking": hotel_booking},
+    debug=True,
+    max_iterations=5
+)
 
-# ----------------------
-# Example Usage
-# ----------------------
-if __name__ == "__main__":
-    print("=" * 80)
-    print("TRAVEL PLANNING AGENT - DEMO")
-    print("=" * 80)
-    
-    # Example 1: Full trip planning
-    print("\n📋 TASK 1: Complete 3-day trip planning\n")
-    result1 = agent.run(
-        "Plan a 3-day trip from New York to Paris starting on 2025-12-01. "
-        "I need flights, hotel for 3 nights, local metro pass, and weather info."
-    )
-    print("\n" + "=" * 80)
-    print("FINAL ITINERARY:")
-    print("=" * 80)
-    print(result1)
-    
-    print("\n\n" + "=" * 80)
-    
-    # Example 2: Simpler request
-    print("\n📋 TASK 2: Quick flight + hotel booking\n")
-    result2 = agent.run(
-        "I need a flight from London to Tokyo and a hotel from Dec 10 to Dec 15, 2025."
-    )
-    print("\n" + "=" * 80)
-    print("FINAL RESULT:")
-    print("=" * 80)
-    print(result2)
+transport_weather_agent = BaseAgent(
+    model=openrouter_model,
+    name="TransportWeatherAgent",
+    identity="Specialized agent for local transport and weather",
+    instruction="Focus on local transport options and weather forecasts.",
+    task="Provide metro, taxi, or bus passes and weather information.",
+    tools={"local_transport": local_transport, "weather_check": weather_check},
+    debug=True,
+    max_iterations=5
+)
+
+trip_planner_agent = SequentialAgent(
+    name="TripPlannerSequential",
+    description="Coordinates specialized agents to create a full travel itinerary.",
+    agents=[flight_agent, hotel_agent, transport_weather_agent],
+    compression_model=openrouter_model,
+    window_size=2,
+    max_context_chars=8000
+)
+
+result = trip_planner_agent.run(
+    "Plan a 2-day trip from San Francisco to Rome starting on 2025-12-10. "
+    "Include flights, hotel stay for 2 nights, local transport passes, and daily weather forecasts."
+)
+
+print(result)
