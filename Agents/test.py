@@ -1,4 +1,4 @@
-from base import BaseAgent
+from base import Agent
 from sequential_agent import SequentialAgent
 import os
 import requests
@@ -36,7 +36,7 @@ def openrouter_model(messages):
         try:
             return json.loads(content)
         except json.JSONDecodeError:
-            # If JSON parsing fails, return as string (BaseAgent will handle it)
+            # If JSON parsing fails, return as string (Agent will handle it)
             return content
             
     except requests.exceptions.RequestException as e:
@@ -155,7 +155,7 @@ def weather_check(city: str = None, date: str = None):
     weather_index = int(hashlib.md5(f"{city}{date}".encode()).hexdigest(), 16) % len(weather_options)
     return f"Weather in {city} on {date}: {weather_options[weather_index]}"
 
-flight_agent = BaseAgent(
+flight_agent = Agent(
     model=openrouter_model,
     name="FlightAgent",
     identity="Specialized agent for finding flights",
@@ -166,7 +166,7 @@ flight_agent = BaseAgent(
     max_iterations=5
 )
 
-hotel_agent = BaseAgent(
+hotel_agent = Agent(
     model=openrouter_model,
     name="HotelAgent",
     identity="Specialized agent for hotel booking",
@@ -177,7 +177,7 @@ hotel_agent = BaseAgent(
     max_iterations=5
 )
 
-transport_weather_agent = BaseAgent(
+transport_weather_agent = Agent(
     model=openrouter_model,
     name="TransportWeatherAgent",
     identity="Specialized agent for local transport and weather",
@@ -185,7 +185,16 @@ transport_weather_agent = BaseAgent(
     task="Provide metro, taxi, or bus passes and weather information.",
     tools={"local_transport": local_transport, "weather_check": weather_check},
     debug=True,
-    max_iterations=5
+    max_iterations=10
+)
+
+report_generator = Agent(
+    model=openrouter_model,
+    name="summariser",
+    identity="You are a Report maker",
+    instruction="Your job is to take in the provided data from weather transport , flight agent and hotel, summmarise them into a report or final ouput for the user",
+    task="summarise the output results from all 3 agents into a beautifull report",
+    debug=True
 )
 
 trip_planner_agent = SequentialAgent(
@@ -197,9 +206,12 @@ trip_planner_agent = SequentialAgent(
     max_context_chars=8000
 )
 
-result = trip_planner_agent.run(
+trip_planner_agent.run(
     "Plan a 2-day trip from San Francisco to Rome starting on 2025-12-10. "
     "Include flights, hotel stay for 2 nights, local transport passes, and daily weather forecasts."
 )
+
+result = report_generator.run(f"here are the ouputs from the agents summarise them flight agent: {flight_agent.final_output} transport agent: {transport_weather_agent.final_output}, hotel agent: {hotel_agent}. \n donot use the agents names, present as if you did the research.")
+
 
 print(result)

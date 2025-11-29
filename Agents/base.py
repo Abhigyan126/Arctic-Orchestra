@@ -3,16 +3,28 @@ import json
 import inspect
 
 
-class BaseAgent:
+class Agent:
     """
-    Improved BaseAgent with strict structured output to prevent hallucinations.
-    
-    Key improvements:
-    1. Structured tool schemas with type information
-    2. Schema enforcement and validation
-    3. Clearer system prompts with examples
-    4. Better error handling and recovery
-    5. Tool result validation
+    Arctic-Orchestra -> Agent Class
+
+    A versatile Base Agent designed to orchestrate LLM-based tool execution for complex tasks.
+    It provides the LLM with a clear identity, strict operational instructions, and a specific task.
+    These system-level directives guide the agent's behavior, while user-level interactions
+    are handled via the `run` method.
+
+    The agent operates iteratively: it sends the conversation history to the LLM, receives
+    JSON-formatted responses (either tool calls or final answers), validates them, executes
+    tools if necessary, and feeds the results back to the LLM.
+
+    ## Methods
+
+    run(user_input: str) -> str
+    Starts the iterative execution loop to process the user's request
+    and return the final output.
+
+    ## Note 
+    You can use the final_output variable to fetch the final output from the agent.
+    It also does return the same, this may come handy when usign it with other available tools.    
     """
 
     def __init__(
@@ -25,6 +37,7 @@ class BaseAgent:
         tools: Dict[str, Callable[..., Any]] = None,
         max_iterations: int = 10,
         debug: bool = False,
+        final_output: str = "",
     ):
         self.model = model
         self.name = name
@@ -34,6 +47,7 @@ class BaseAgent:
         self.tools = tools or {}
         self.max_iterations = max_iterations
         self.debug = debug
+        self.final_output = final_output
         self.tool_schemas = self._build_tool_schemas()
 
     def _build_tool_schemas(self) -> Dict[str, Dict[str, Any]]:
@@ -210,6 +224,7 @@ class BaseAgent:
 
                 case {"finish": True, "output": output}:
                     self._log("Task finished.")
+                    self.final_output = output
                     return str(output)
 
                 case {"tool": tool_name, "args": args}:
