@@ -1,5 +1,6 @@
 from base import Agent
 from sequential_agent import SequentialAgent
+from loop_agent import LoopSequentialAgent
 import os
 import requests
 from dotenv import load_dotenv
@@ -162,8 +163,8 @@ flight_agent = Agent(
     instruction="Focus only on flight options, schedules, and prices.",
     task="Find the best flights based on user query.",
     tools={"find_flight": find_flight},
-    debug=True,
-    max_iterations=5
+    max_iterations=5,
+    debug=True
 )
 
 hotel_agent = Agent(
@@ -173,8 +174,8 @@ hotel_agent = Agent(
     instruction="Focus only on hotels, availability, pricing, and nights.",
     task="Book or suggest hotels based on user query.",
     tools={"hotel_booking": hotel_booking},
-    debug=True,
-    max_iterations=5
+    max_iterations=5,
+    debug=True
 )
 
 transport_weather_agent = Agent(
@@ -184,26 +185,42 @@ transport_weather_agent = Agent(
     instruction="Focus on local transport options and weather forecasts.",
     task="Provide metro, taxi, or bus passes and weather information.",
     tools={"local_transport": local_transport, "weather_check": weather_check},
-    debug=True,
-    max_iterations=10
+    max_iterations=10,
+    debug=True
 )
 
 report_generator = Agent(
     model=openrouter_model,
     name="summariser",
     identity="You are a Report maker",
-    instruction="Your job is to take in the provided data from weather transport , flight agent and hotel, summmarise them into a report or final ouput for the user",
-    task="summarise the output results from all 3 agents into a beautifull report",
+    instruction="Your job is to take in the provided data from weather transport , flight agent and hotel, summmarise them into a report for the user",
+    task="summarise the output results from all 3 agents into a beautifull detailed report.",
     debug=True
 )
 
-trip_planner_agent = SequentialAgent(
+verifier = Agent(
+    model=openrouter_model,
+    name="verifier",
+    identity="You are a Judger",
+    instruction="Your job is to take in the provided data from the report generator agent and check if the report meet critaria of the query",
+    task=f"""** if the crietaria meet the requirement of the query set the terminate_loop to true **"
+    Donot respond anything especially you are not to respond with the report . you are to only return terminate_loop = True or return why you didnt use it.
+    ### Report
+    {report_generator.final_output}
+    \n
+    """,
+    debug=True
+)
+
+trip_planner_agent = LoopSequentialAgent(
     name="TripPlannerSequential",
     description="Coordinates specialized agents to create a full travel itinerary.",
-    agents=[flight_agent, hotel_agent, transport_weather_agent],
+    agents=[flight_agent, hotel_agent, transport_weather_agent, report_generator, verifier],
     compression_model=openrouter_model,
     window_size=2,
-    max_context_chars=8000
+    max_context_chars=8000,
+    agents_with_exit_flag=[verifier],
+    max_loops=2
 )
 
 trip_planner_agent.run(
@@ -211,7 +228,4 @@ trip_planner_agent.run(
     "Include flights, hotel stay for 2 nights, local transport passes, and daily weather forecasts."
 )
 
-result = report_generator.run(f"here are the ouputs from the agents summarise them flight agent: {flight_agent.final_output} transport agent: {transport_weather_agent.final_output}, hotel agent: {hotel_agent}. \n donot use the agents names, present as if you did the research.")
-
-
-print(result)
+print(report_generator.final_output)
