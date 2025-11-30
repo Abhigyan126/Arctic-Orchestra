@@ -1,53 +1,16 @@
-from base import Agent
-from sequential_agent import SequentialAgent
-from loop_agent import LoopSequentialAgent
+from Agents.base import Agent
+from Agents.sequential_agent import SequentialAgent
+from Agents.loop_agent import LoopSequentialAgent
+from Models.openrouter import OpenRouterClient
+from copy import deepcopy
 import os
 import requests
 from dotenv import load_dotenv
 import json
 
-load_dotenv("/Users/abhigyan/Downloads/project/Arctic/.env")
-API_KEY = os.getenv("key")
-
-
-# ----------------------
-# Model Wrapper
-# ----------------------
-def openrouter_model(messages):
-    """Wrapper for OpenRouter API with proper error handling."""
-    url = "https://openrouter.ai/api/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": "qwen/qwen3-30b-a3b",
-        "messages": messages,
-        "temperature": 0.3,  # Lower temperature for more consistent structured output
-        "response_format": {"type": "json_object"}  # Request JSON format if supported
-    }
-
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-        content = data["choices"][0]["message"]["content"]
-
-        # Try to parse as JSON
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            # If JSON parsing fails, return as string (Agent will handle it)
-            return content
-            
-    except requests.exceptions.RequestException as e:
-        print(f"API request failed: {e}")
-        return {"error": f"API request failed: {str(e)}"}
-    except (KeyError, IndexError) as e:
-        print(f"Unexpected API response format: {e}")
-        return {"error": "Unexpected API response format"}
-
-
+model = OpenRouterClient("qwen/qwen3-30b-a3b")
+model_low_temp = deepcopy(model)
+model_low_temp.configure(temperature=0.5)
 # ----------------------
 # Example Tools (Updated with proper signatures)
 # ----------------------
@@ -157,7 +120,7 @@ def weather_check(city: str = None, date: str = None):
     return f"Weather in {city} on {date}: {weather_options[weather_index]}"
 
 flight_agent = Agent(
-    model=openrouter_model,
+    model=model.run,
     name="FlightAgent",
     identity="Specialized agent for finding flights",
     instruction="Focus only on flight options, schedules, and prices.",
@@ -168,7 +131,7 @@ flight_agent = Agent(
 )
 
 hotel_agent = Agent(
-    model=openrouter_model,
+    model=model.run,
     name="HotelAgent",
     identity="Specialized agent for hotel booking",
     instruction="Focus only on hotels, availability, pricing, and nights.",
@@ -179,7 +142,7 @@ hotel_agent = Agent(
 )
 
 transport_weather_agent = Agent(
-    model=openrouter_model,
+    model=model.run,
     name="TransportWeatherAgent",
     identity="Specialized agent for local transport and weather",
     instruction="Focus on local transport options and weather forecasts.",
@@ -190,7 +153,7 @@ transport_weather_agent = Agent(
 )
 
 report_generator = Agent(
-    model=openrouter_model,
+    model=model.run,
     name="summariser",
     identity="You are a Report maker",
     instruction="Your job is to take in the provided data from weather transport , flight agent and hotel, summmarise them into a report for the user",
@@ -199,12 +162,12 @@ report_generator = Agent(
 )
 
 verifier = Agent(
-    model=openrouter_model,
+    model=model_low_temp.run,
     name="verifier",
     identity="You are a Judger",
-    instruction="Your job is to take in the provided data from the report generator agent and check if the report meet critaria of the query",
-    task=f"""** if the crietaria meet the requirement of the query set the terminate_loop to true **"
-    Donot respond anything especially you are not to respond with the report . you are to only return terminate_loop = True or return why you didnt use it.
+    instruction="Your job is to take in the provided data from the report generator agent and loosly verify if the report meet critaria of the query",
+    task=f"""** if the crietaria meet the requirement of the query set the `terminate_loop` to true **"
+    Donot respond anything especially you are not to respond with the report . you are to only return `terminate_loop` = True or return why you didnt use it.
     ### Report
     {report_generator.final_output}
     \n
@@ -216,7 +179,6 @@ trip_planner_agent = LoopSequentialAgent(
     name="TripPlannerSequential",
     description="Coordinates specialized agents to create a full travel itinerary.",
     agents=[flight_agent, hotel_agent, transport_weather_agent, report_generator, verifier],
-    compression_model=openrouter_model,
     window_size=2,
     max_context_chars=8000,
     agents_with_exit_flag=[verifier],

@@ -1,6 +1,6 @@
 import json
 from typing import List, Dict, Any
-from sequential_agent import SequentialAgent
+from .sequential_agent import SequentialAgent
 
 
 class LoopSequentialAgent(SequentialAgent):

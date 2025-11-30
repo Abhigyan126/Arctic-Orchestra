@@ -195,21 +195,20 @@ class Agent:
     def _log(self, *args):
         """Debug logging."""
         if self.debug:
-            print("[AGENT DEBUG]", *args)
+            print(f"[{self.name}]", *args)
 
     def run(self, user_input: str) -> str:
         messages = self.base_messages()
         messages.append({"role": "user", "content": user_input})
 
         for step in range(self.max_iterations):
-            self._log(f"\n {self.name}: [{step}]")
-            self._log("Sending to model...")
-
+            print("\n")
+            self._log(f"[{step}]")
             raw_response = self.model(messages)
             self._log(f"Raw model response: {raw_response}")
 
             response = self._parse_response(raw_response)
-            self._log(f"Parsed response: {response}")
+            self._log(f"Parsed response: {json.dumps(response, indent=2, ensure_ascii=False)}")
 
             match response:
                 case {"error": err, **rest}:
