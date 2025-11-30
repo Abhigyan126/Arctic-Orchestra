@@ -1,0 +1,25 @@
+[project]
+name = "arctic-orchestra"
+version = "0.1.0"
+description = "Arctic-Orchestra: A modular agent orchestration framework"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Abhigyan" }
+]
+
+requires-python = ">=3.9"
+
+dependencies = [
+    "python-dotenv>=1.2.1",
+    "requests>=2.32.5"
+]
+
+[project.urls]
+Homepage = "https://github.com/Abhigyan126/Arctic-Orchestra"
+Source = "https://github.com/Abhigyan126/Arctic-Orchestra"
+Issues = "https://github.com/Abhigyan126/Arctic-Orchestra/issues"
+
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
