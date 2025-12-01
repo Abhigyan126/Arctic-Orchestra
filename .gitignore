@@ -96,3 +96,5 @@ media/
 *.secret
 secrets.*
 config.local.*
+
+src/arctic_orchestra/test.py

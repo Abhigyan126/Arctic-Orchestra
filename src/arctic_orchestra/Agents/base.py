@@ -22,9 +22,9 @@ class Agent:
     Starts the iterative execution loop to process the user's request
     and return the final output.
 
-    ## Note 
+    ## Note
     You can use the final_output variable to fetch the final output from the agent.
-    It also does return the same, this may come handy when usign it with other available tools.    
+    It also does return the same, this may come handy when usign it with other available tools.
     """
 
     def __init__(
@@ -57,7 +57,7 @@ class Agent:
             try:
                 # Get tool description
                 desc, usage = fn("__describe__")
-                
+
                 # Extract parameter information from function signature
                 sig = inspect.signature(fn)
                 params = {}
@@ -68,7 +68,7 @@ class Agent:
                         "type": param.annotation.__name__ if param.annotation != inspect.Parameter.empty else "any",
                         "required": param.default == inspect.Parameter.empty
                     }
-                
+
                 schemas[name] = {
                     "description": desc,
                     "example": usage,
@@ -81,19 +81,19 @@ class Agent:
                     "example": "No example available",
                     "parameters": {}
                 }
-        
+
         return schemas
 
     def _format_tool_schemas(self) -> str:
         """Format tool schemas in a clear, structured way."""
         if not self.tool_schemas:
             return "No tools available."
-        
+
         formatted = []
         for name, schema in self.tool_schemas.items():
             tool_info = [f"Tool: {name}"]
             tool_info.append(f"Description: {schema['description']}")
-            
+
             if schema['parameters']:
                 tool_info.append("Parameters:")
                 for param_name, param_info in schema['parameters'].items():
@@ -101,16 +101,16 @@ class Agent:
                     tool_info.append(f"  - {param_name} ({param_info['type']}, {required})")
             else:
                 tool_info.append("Parameters: None")
-            
+
             tool_info.append(f"Example: {schema['example']}")
             formatted.append("\n".join(tool_info))
-        
+
         return "\n\n".join(formatted)
 
     def base_messages(self) -> List[Dict[str, str]]:
         """Build base system messages with clear instructions and examples."""
         tool_schemas_str = self._format_tool_schemas()
-        
+
         return [
             {
                 "role": "system",
@@ -149,22 +149,22 @@ class Agent:
         if tool_name not in self.tool_schemas:
             available = ", ".join(self.tool_schemas.keys())
             return f"Tool '{tool_name}' does not exist. Available tools: {available}"
-        
+
         schema = self.tool_schemas[tool_name]
-        
+
         # Check required parameters
         for param_name, param_info in schema['parameters'].items():
             if param_info['required'] and param_name not in args:
                 return f"Missing required parameter '{param_name}' for tool '{tool_name}'"
-        
+
         # Check for unexpected parameters
         expected_params = set(schema['parameters'].keys())
         provided_params = set(args.keys())
         unexpected = provided_params - expected_params
-        
+
         if unexpected:
             return f"Unexpected parameters for tool '{tool_name}': {', '.join(unexpected)}. Expected: {', '.join(expected_params)}"
-        
+
         return None
 
     def _parse_response(self, response: Union[Dict[str, Any], str]) -> Union[Dict[str, Any], str]:
@@ -172,11 +172,11 @@ class Agent:
         # If already a dict, return as-is
         if isinstance(response, dict):
             return response
-        
+
         # If string, try to parse as JSON
         if isinstance(response, str):
             response = response.strip()
-            
+
             # Try to extract JSON if there's extra text
             if not response.startswith('{'):
                 # Look for JSON object in the response
@@ -184,12 +184,12 @@ class Agent:
                 end = response.rfind('}')
                 if start != -1 and end != -1:
                     response = response[start:end+1]
-            
+
             try:
                 return json.loads(response)
             except json.JSONDecodeError:
                 return {"error": "Could not parse response as JSON", "raw": response}
-        
+
         return response
 
     def _log(self, *args):

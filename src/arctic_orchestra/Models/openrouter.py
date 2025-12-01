@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 class OpenRouterClient:
     """
     A flexible OpenRouter API client.
-    
+
     - Loads API key from environment (OPENROUTER_API_KEY) OR accepts custom key on init.
     - Configurable model, temperature, response format, timeout.
     - Allows reuse across agents and models.
@@ -47,9 +47,6 @@ class OpenRouterClient:
         self.timeout = timeout
         self.base_url = base_url
 
-    # -----------------------------------
-    # Main request method
-    # -----------------------------------
     def run(
         self,
         messages: List[Dict[str, str]],
@@ -95,12 +92,9 @@ class OpenRouterClient:
         except requests.exceptions.RequestException as e:
             return {"error": f"API request failed: {str(e)}"}
 
-        except (KeyError, IndexError) as e:
+        except (KeyError, IndexError):
             return {"error": "Unexpected API response format"}
 
-    # ------------------------------
-    # Utility: update config at runtime
-    # ------------------------------
     def configure(
         self,
         *,
