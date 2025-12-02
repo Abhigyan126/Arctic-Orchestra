@@ -55,24 +55,27 @@ class GeminiClient:
 
         self.project = project
         self.location = location
+        vertex_scopes = ["https://www.googleapis.com/auth/cloud-platform"]
 
         if service_account_json:
             if not os.path.exists(service_account_json):
                 raise FileNotFoundError(f"Service account JSON not found: {service_account_json}")
 
-            credentials, _ = load_credentials_from_file(service_account_json)
+            credentials, _ = load_credentials_from_file(service_account_json, scopes=vertex_scopes)
             self.client = genai.Client(
-                vertex_project=project,
-                vertex_location=location,
+                vertexai=True,
+                project=project,
+                location=location,
                 credentials=credentials
             )
             return
 
         try:
-            credentials, _ = default_credentials()
+            credentials, _ = default_credentials(scopes=vertex_scopes)
             self.client = genai.Client(
-                vertex_project=project,
-                vertex_location=location,
+                vertexai=True,
+                project=project,
+                location=location,
                 credentials=credentials
             )
         except Exception:

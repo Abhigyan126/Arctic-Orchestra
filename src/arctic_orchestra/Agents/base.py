@@ -133,12 +133,12 @@ class Agent:
                     f"{tool_schemas_str}\n\n"
                     "=== EXAMPLES ===\n"
                     "Good response (tool call):\n"
-                    '{"tool": "calculator", "args": {"expression": "2 + 2"}}\n\n'
+                    '{"tool": "tool_name", "args": {"arg1": "arg_param"}}\n\n'
                     "Good response (finish):\n"
-                    '{"finish": true, "output": "The calculation result is 4"}\n\n'
+                    '{"finish": true, "output": "result is .."}\n\n'
                     "BAD responses (DO NOT DO):\n"
                     '- {"tool": "made_up_tool", "args": {}} ← Tool does not exist\n'
-                    '- {"tool": "calculator", "args": {"expr": "2+2"}} ← Wrong parameter name\n'
+                    '- {"tool": "tool_name", "args": {"expr": "pram"}} ← Wrong parameter name\n'
                     '- Let me calculate that... {"tool": "calculator"} ← Extra text before JSON'
                 ),
             }
