@@ -1,262 +1,245 @@
-from typing import Callable, Dict, Any, List, Optional, Union
-import json
 import inspect
-
+import json
+import os
+import litellm
+import warnings
+from typing import Callable, Dict, Any, List, Optional, get_type_hints
+from arctic_orchestra.Errors.tool_not_supported import ModelToolNotSupportedWarning
+from arctic_orchestra.Errors.web_search_not_supported import ModelWebSearchNotSupportedWarning
 
 class Agent:
     """
-    Arctic-Orchestra -> Agent Class
+    A production-grade, universal AI agent wrapper utilizing LiteLLM for cross-provider compatibility.
 
-    A versatile Base Agent designed to orchestrate LLM-based tool execution for complex tasks.
-    It provides the LLM with a clear identity, strict operational instructions, and a specific task.
-    These system-level directives guide the agent's behavior, while user-level interactions
-    are handled via the `run` method.
+    This class orchestrates the interaction between a Large Language Model (LLM) and executable Python 
+    functions (tools). It manages the conversion of Python type hints to JSON schemas, handles the 
+    LLM's tool-calling logic, and maintains a structured context window comprising Identity, 
+    Instructions, History, and the current Task.
 
-    The agent operates iteratively: it sends the conversation history to the LLM, receives
-    JSON-formatted responses (either tool calls or final answers), validates them, executes
-    tools if necessary, and feeds the results back to the LLM.
+    Attributes:
+        model_name (str): The model identifier string (e.g., 'gpt-4o', 'claude-3-opus', 'gemini-pro').
+        name (str): The designation of the agent for logging and identification purposes.
+        identity (str): The persona or role definition of the agent (e.g., "You are a Senior DevOps Engineer").
+        instruction (str): The set of constraints, guidelines, and behavioral rules the agent must follow.
+        tools (Dict[str, Callable]): A dictionary mapping function names to the actual Python callable objects.
+        api_key (str): Optional API key override. If None, the environment variable for the specific provider is used.
+        debug (bool): Flag to enable verbose logging of the agent's reasoning and execution steps.
 
-    ## Methods
+    Usage:
+        def get_weather(location: str) -> str:
+            '''Fetches weather for a location.'''
+            return "Sunny, 25C"
 
-    run(user_input: str) -> str
-    Starts the iterative execution loop to process the user's request
-    and return the final output.
+        agent = Agent(
+            model_name="gpt-4",
+            name="WeatherBot",
+            identity="You are a helpful assistant.",
+            instruction="Always use metric units.",
+            tools={"get_weather": get_weather}
+        )
 
-    ## Note
-    You can use the final_output variable to fetch the final output from the agent.
-    It also does return the same, this may come handy when usign it with other available tools.
+        response = agent.run("What is the weather in Paris?")
     """
 
     def __init__(
         self,
-        model: Callable[[List[Dict[str, str]]], Dict[str, Any]],
+        model_name: str,
         name: str,
         identity: str,
         instruction: str,
-        task: str,
         tools: Dict[str, Callable[..., Any]] = None,
-        max_iterations: int = 10,
-        debug: bool = False,
-        final_output: str = "",
+        api_key: str = None,
+        websearch_config: json = None,
+        temperature: float = 1.0,
+        top_p: float = 1.0,
+        debug: bool = False
     ):
-        self.model = model
+        self.model_name = model_name
         self.name = name
         self.identity = identity
         self.instruction = instruction
-        self.task = task
         self.tools = tools or {}
-        self.max_iterations = max_iterations
+        self.api_key = api_key
+        self.websearch_config = websearch_config
         self.debug = debug
-        self.final_output = final_output
+        self.temperature = temperature
+        self.top_p = top_p
+        self.final_response = ""
         self.tool_schemas = self._build_tool_schemas()
 
-    def _build_tool_schemas(self) -> Dict[str, Dict[str, Any]]:
-        """Build detailed schemas for each tool including parameter types."""
-        schemas = {}
+    def _get_type_name(self, t: Any) -> str:
+        if t == str: return "string"
+        if t == int: return "integer"
+        if t == float: return "number"
+        if t == bool: return "boolean"
+        if t == dict: return "object"
+        if t == list: return "array"
+        return "string"
+
+    def _debug_log(self, message: str) -> None:
+        """Internal helper to print debug messages with agent name prefix."""
+        if self.debug:
+            print(f"[{self.name}] : {message}")
+
+    def _build_tool_schemas(self) -> List[Dict]:
+        schemas = []
         for name, fn in self.tools.items():
-            try:
-                # Get tool description
-                desc, usage = fn("__describe__")
+            description = inspect.getdoc(fn) or f"Function {name}"
+            type_hints = get_type_hints(fn)
+            sig = inspect.signature(fn)
+            
+            properties = {}
+            required = []
 
-                # Extract parameter information from function signature
-                sig = inspect.signature(fn)
-                params = {}
-                for param_name, param in sig.parameters.items():
-                    if param_name == "kwargs" or param_name.startswith("__"):
-                        continue
-                    params[param_name] = {
-                        "type": param.annotation.__name__ if param.annotation != inspect.Parameter.empty else "any",
-                        "required": param.default == inspect.Parameter.empty
+            for param_name, param in sig.parameters.items():
+                if param_name == "self" or param_name.startswith("__"):
+                    continue
+                
+                param_type = type_hints.get(param_name, str)
+                json_type = self._get_type_name(param_type)
+                
+                properties[param_name] = {
+                    "type": json_type,
+                    "description": f"Parameter {param_name}" 
+                }
+                
+                if param.default == inspect._empty:
+                    required.append(param_name)
+
+            schemas.append({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": properties,
+                        "required": required
                     }
-
-                schemas[name] = {
-                    "description": desc,
-                    "example": usage,
-                    "parameters": params
                 }
-            except Exception as e:
-                self._log(f"Warning: Could not build schema for tool '{name}': {e}")
-                schemas[name] = {
-                    "description": "No description available",
-                    "example": "No example available",
-                    "parameters": {}
-                }
-
+            })
         return schemas
 
-    def _format_tool_schemas(self) -> str:
-        """Format tool schemas in a clear, structured way."""
-        if not self.tool_schemas:
-            return "No tools available."
+    def _construct_system_prompt(self) -> Dict[str, str]:
+        system_content = (
+            f"### AGENT IDENTITY\n{self.identity}\n\n"
+            f"### OPERATIONAL INSTRUCTIONS\n{self.instruction}"
+        )
+        return {
+            "role": "system",
+            "content": system_content
+        }
 
-        formatted = []
-        for name, schema in self.tool_schemas.items():
-            tool_info = [f"Tool: {name}"]
-            tool_info.append(f"Description: {schema['description']}")
+    def run(self, user_input: str, history: List[Dict] = None) -> str:
+        if history is None:
+            history = []
+        
+        system_message = self._construct_system_prompt()
+        
+        formatted_user_task = {
+            "role": "user",
+            "content": f"### CURRENT TASK\n{user_input}"
+        }
 
-            if schema['parameters']:
-                tool_info.append("Parameters:")
-                for param_name, param_info in schema['parameters'].items():
-                    required = "required" if param_info['required'] else "optional"
-                    tool_info.append(f"  - {param_name} ({param_info['type']}, {required})")
-            else:
-                tool_info.append("Parameters: None")
+        messages = [system_message] + history + [formatted_user_task]
 
-            tool_info.append(f"Example: {schema['example']}")
-            formatted.append("\n".join(tool_info))
+        self._debug_log("--- Initiating Run ---")
 
-        return "\n\n".join(formatted)
+        try:
+            if (litellm.supports_function_calling(model=self.model_name) == False):
+                warnings.warn(ModelToolNotSupportedWarning(
+                    error_code='X_2001',
+                    data_field=self.model_name,
+                    message=f"Model '{self.model_name}' does not support tool calling, use a model with native tool calling support"
+                ))
+            if (self.websearch_config != None and litellm.supports_web_search(model=self.model_name) == False):
+                warnings.warn(ModelWebSearchNotSupportedWarning(
+                    error_code='X_2002',
+                    data_field=self.model_name,
+                ))
 
-    def base_messages(self) -> List[Dict[str, str]]:
-        """Build base system messages with clear instructions and examples."""
-        tool_schemas_str = self._format_tool_schemas()
+            response = litellm.completion(
+                model=self.model_name,
+                messages=messages,
+                tools=self.tool_schemas if self.tool_schemas else None,
+                tool_choice="auto" if self.tool_schemas else None,
+                api_key=self.api_key,
+                temperature=self.temperature,
+                top_p=self.top_p,
+                web_search_options=self.websearch_config or {}
+            )
+        except Exception as e:
+            return f"LLM Execution Error: {str(e)}"
 
-        return [
-            {
-                "role": "system",
-                "content": (
-                    f"IDENTITY:\n{self.identity}\n\n"
-                    f"INSTRUCTION:\n{self.instruction}\n\n"
-                    f"CURRENT TASK:\n{self.task}\n\n"
-                    "=== CRITICAL RULES ===\n"
-                    "1. You MUST respond with valid JSON only - no other text\n"
-                    "2. You MUST use only the tools listed below - never invent tool names\n"
-                    "3. You MUST match parameter names exactly as specified\n"
-                    "4. Always call appropriate tools before providing final answers\n"
-                    "5. Verify tool outputs before finishing\n\n"
-                    "=== RESPONSE PROTOCOLS ===\n"
-                    "To call a tool:\n"
-                    '{"tool": "<exact_tool_name>", "args": {"param1": "value1", "param2": "value2"}}\n\n'
-                    "To finish the task:\n"
-                    '{"finish": true, "output": "your final answer here"}\n\n'
-                    "=== AVAILABLE TOOLS ===\n"
-                    f"{tool_schemas_str}\n\n"
-                    "=== EXAMPLES ===\n"
-                    "Good response (tool call):\n"
-                    '{"tool": "tool_name", "args": {"arg1": "arg_param"}}\n\n'
-                    "Good response (finish):\n"
-                    '{"finish": true, "output": "result is .."}\n\n'
-                    "BAD responses (DO NOT DO):\n"
-                    '- {"tool": "made_up_tool", "args": {}} ← Tool does not exist\n'
-                    '- {"tool": "tool_name", "args": {"expr": "pram"}} ← Wrong parameter name\n'
-                    '- Let me calculate that... {"tool": "calculator"} ← Extra text before JSON'
-                ),
-            }
-        ]
+        response_message = response.choices[0].message
+        tool_calls = getattr(response_message, "tool_calls", None)
 
-    def _validate_tool_call(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
-        """Validate a tool call against the schema. Returns error message or None."""
-        if tool_name not in self.tool_schemas:
-            available = ", ".join(self.tool_schemas.keys())
-            return f"Tool '{tool_name}' does not exist. Available tools: {available}"
-
-        schema = self.tool_schemas[tool_name]
-
-        # Check required parameters
-        for param_name, param_info in schema['parameters'].items():
-            if param_info['required'] and param_name not in args:
-                return f"Missing required parameter '{param_name}' for tool '{tool_name}'"
-
-        # Check for unexpected parameters
-        expected_params = set(schema['parameters'].keys())
-        provided_params = set(args.keys())
-        unexpected = provided_params - expected_params
-
-        if unexpected:
-            return f"Unexpected parameters for tool '{tool_name}': {', '.join(unexpected)}. Expected: {', '.join(expected_params)}"
-
-        return None
-
-    def _parse_response(self, response: Union[Dict[str, Any], str]) -> Union[Dict[str, Any], str]:
-        """Parse and validate model response."""
-        # If already a dict, return as-is
-        if isinstance(response, dict):
-            return response
-
-        # If string, try to parse as JSON
-        if isinstance(response, str):
-            response = response.strip()
-
-            # Try to extract JSON if there's extra text
-            if not response.startswith('{'):
-                # Look for JSON object in the response
-                start = response.find('{')
-                end = response.rfind('}')
-                if start != -1 and end != -1:
-                    response = response[start:end+1]
-
-            try:
-                return json.loads(response)
-            except json.JSONDecodeError:
-                return {"error": "Could not parse response as JSON", "raw": response}
-
-        return response
-
-    def _log(self, *args):
-        """Debug logging."""
+        # Log assistant's immediate response when in debug mode
         if self.debug:
-            print(f"[{self.name}]", *args)
+            try:
+                assistant_preview = response_message.content
+            except Exception:
+                assistant_preview = "<no content>"
+            self._debug_log(f"{assistant_preview}")
 
-    def run(self, user_input: str) -> str:
-        messages = self.base_messages()
-        messages.append({"role": "user", "content": user_input})
+        if tool_calls:
+            messages.append(response_message)
 
-        for step in range(self.max_iterations):
-            print("\n")
-            self._log(f"[{step}]")
-            raw_response = self.model(messages)
-            self._log(f"Raw model response: {raw_response}")
+            self._debug_log(f"Tool Execution: Triggered {len(tool_calls)} tools")
 
-            response = self._parse_response(raw_response)
-            self._log(f"Parsed response: {json.dumps(response, indent=2, ensure_ascii=False)}")
+            for tool_call in tool_calls:
+                function_name = tool_call.function.name
+                tool_id = getattr(tool_call, "id", None)
 
-            match response:
-                case {"error": err, **rest}:
-                    msg = (
-                        f"Failed to parse your response as JSON. "
-                        f"You must respond with valid JSON only.\n"
-                        f"Error: {err}\n"
-                        f"Your response was: {rest.get('raw', 'N/A')}"
-                    )
-                    messages.append({"role": "assistant", "content": str(raw_response)})
-                    messages.append({"role": "user", "content": msg})
-
-                case {"finish": True, "output": output}:
-                    self._log("Task finished.")
-                    self.final_output = output
-                    return str(output)
-
-                case {"tool": tool_name, "args": args}:
-                    validation_error = self._validate_tool_call(tool_name, args)
-                    if validation_error:
-                        self._log(f"Validation error: {validation_error}")
-                        messages.append({"role": "assistant", "content": json.dumps(response)})
-                        messages.append({"role": "user", "content": validation_error})
-
+                try:
                     try:
-                        self._log(f"Executing: {tool_name}({args})")
-                        tool_result = self.tools[tool_name](**args)
-                        self._log(f"Tool result: {tool_result}")
-                        messages.append({"role": "assistant", "content": json.dumps(response)})
-                        messages.append({"role": "tool", "content": str(tool_result)})
-                    except Exception as e:
-                        m = f"Error executing tool '{tool_name}': {str(e)}"
-                        self._log(m)
-                        messages.append({"role": "assistant", "content": json.dumps(response)})
-                        messages.append({"role": "tool", "content": m})
+                        function_args = json.loads(tool_call.function.arguments)
+                    except Exception:
+                        function_args = {}
 
-                case s if isinstance(s, str):
-                    self._log("Received direct text response (not JSON).")
-                    return s
-
-                case _:
-                    m = (
-                        f"Invalid response format. Your response must be one of:\n"
-                        f'1. Tool call: {{"tool": "name", "args": {{}}}}\n'
-                        f'2. Finish: {{"finish": true, "output": "result"}}\n'
-                        f"Your response: {response}"
+                    self._debug_log(
+                        f"Tool:'{function_name}' with args: {json.dumps(function_args, ensure_ascii=False)}"
                     )
-                    messages.append({"role": "assistant", "content": str(raw_response)})
-                    messages.append({"role": "user", "content": m})
 
-        return f"Error: Task not completed within {self.max_iterations} iterations."
+                    tool_function = self.tools.get(function_name)
+                    if not tool_function:
+                        raise ValueError(f"Tool {function_name} is not registered.")
+
+                    function_result = tool_function(**function_args)
+                    function_response_str = str(function_result)
+
+                    self._debug_log(
+                        f"Tool:'{function_name}' returned: {function_response_str}"
+                    )
+
+                except Exception as e:
+                    function_response_str = f"Error executing tool {function_name}: {str(e)}"
+                    self._debug_log(f"Tool:'{function_name}' error: {str(e)}")
+
+                messages.append({
+                    "tool_call_id": tool_id,
+                    "role": "tool",
+                    "name": function_name,
+                    "content": function_response_str
+                })
+
+            final_response = litellm.completion(
+                model=self.model_name,
+                messages=messages,
+                api_key=self.api_key
+            )
+
+            if not getattr(final_response, 'choices', None) or not final_response.choices:
+                error_msg = f"LLM returned an empty response (no choices) in the final call after tool execution. Model: {self.model_name}"
+                self._debug_log(f"!!! ERROR: {error_msg}")
+                # You can add logic here to inspect final_response.error if available
+                return f"LLM Execution Error: {error_msg}. Please check the logs for potential content filtering or model prediction errors."
+
+            final_content = final_response.choices[0].message.content
+            self._debug_log(f" -> {final_content}")
+            self.final_response = final_content
+            return final_content
+
+        self._debug_log("Returning assistant response without tool calls")
+        self.final_response = response_message.content
+        return response_message.content

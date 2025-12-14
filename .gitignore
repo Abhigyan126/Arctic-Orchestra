@@ -97,4 +97,5 @@ media/
 secrets.*
 config.local.*
 
-src/arctic_orchestra/test.py
+src/test.py
+ARCTICENV

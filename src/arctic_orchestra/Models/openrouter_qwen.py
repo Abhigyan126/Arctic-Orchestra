@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Union
 from dotenv import load_dotenv
 
 
-class OpenRouterClient:
+class OpenRouterClientQwen:
     """
     A flexible OpenRouter API client.
 

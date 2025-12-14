@@ -20,6 +20,7 @@ class GeminiClient:
         location: Optional[str] = None,
         service_account_json: Optional[str] = None,
         load_env: bool = True,
+        grounding: bool = False
     ):
         if load_env:
             load_dotenv()
@@ -29,6 +30,7 @@ class GeminiClient:
         self.config_args = config_args or {}
         self.safety_settings = safety_settings
         self.vertex_ai = vertex_ai
+        self.grounding = grounding
 
         if vertex_ai:
             self._init_vertex_ai(project, location, service_account_json)
@@ -85,6 +87,21 @@ class GeminiClient:
                 "    gcloud auth application-default login\n"
             )
 
+    def _clean_text(self, text: str) -> str:
+        """Strips Markdown code blocks (```json ... ```) from the response text."""
+        cleaned = text.strip()
+        # Check if text is wrapped in code fences
+        if cleaned.startswith("```") and cleaned.endswith("```"):
+            # Split by the first newline to separate the opening fence (e.g., ```json)
+            parts = cleaned.split("\n", 1)
+            if len(parts) > 1:
+                # Take the content part
+                content = parts[1]
+                # Remove the trailing ``` (last 3 chars)
+                content = content[:-3]
+                return content.strip()
+        return cleaned
+
     def run(
         self,
         messages: List[Dict[str, str]],
@@ -92,6 +109,7 @@ class GeminiClient:
         temperature: Optional[float] = None,
         config_args: Optional[Dict[str, Any]] = None,
         safety_settings: Optional[List[types.SafetySetting]] = None,
+        grounding: Optional[bool] = None,
     ) -> Union[Dict[str, Any], str]:
 
         system_instruction = None
@@ -112,6 +130,17 @@ class GeminiClient:
 
         final_config = {**self.config_args, **(config_args or {})}
 
+        # --- Grounding Logic ---
+        should_ground = grounding if grounding is not None else self.grounding
+
+        if should_ground:
+            search_tool = types.Tool(google_search=types.GoogleSearch())
+            current_tools = final_config.get("tools")
+            if current_tools is None:
+                final_config["tools"] = [search_tool]
+            elif isinstance(current_tools, list):
+                final_config["tools"] = current_tools + [search_tool]
+
         if system_instruction:
             final_config["system_instruction"] = system_instruction
 
@@ -131,12 +160,14 @@ class GeminiClient:
                 config=generation_config,
             )
 
-            text = response.text
+            # Get text and clean potential Markdown fences
+            text = self._clean_text(response.text)
 
             if final_config.get("response_mime_type") == "application/json":
                 try:
                     return json.loads(text)
                 except Exception:
+                    # If parsing fails, return the cleaned text
                     return text
 
             return text
@@ -151,6 +182,7 @@ class GeminiClient:
         temperature: Optional[float] = None,
         config_args: Optional[Dict[str, Any]] = None,
         safety_settings: Optional[List[types.SafetySetting]] = None,
+        grounding: Optional[bool] = None
     ):
         if model:
             self.model = model
@@ -160,3 +192,5 @@ class GeminiClient:
             self.config_args.update(config_args)
         if safety_settings is not None:
             self.safety_settings = safety_settings
+        if grounding is not None:
+            self.grounding = grounding
